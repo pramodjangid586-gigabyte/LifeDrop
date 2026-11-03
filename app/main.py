@@ -17,6 +17,7 @@ from app.api.emergency import router as emergency_router
 from app.api.ingestion import router as ingestion_router
 from app.api.events import router as events_router
 from app.api.admin import router as admin_router
+import os
 import asyncio
 from app.api.notifications import router as notifications_router
 from app.services.inventory_service import calculate_availability_status, get_inventory_history, refresh_all_inventory_timestamps
@@ -44,16 +45,20 @@ async def lifespan(app: FastAPI):
     # Refresh all inventory timestamps so blood bank feeds show fresh, real-time availability
     refresh_all_inventory_timestamps()
     
-    # Start gentle background real-time feed simulation worker
-    worker_task = asyncio.create_task(periodic_feed_worker())
+    # Start gentle background real-time feed simulation worker only in long-running server environments (e.g. local uvicorn)
+    # Serverless platforms like Vercel freeze idle workers and terminate background loops
+    worker_task = None
+    if not os.getenv("VERCEL") and not os.getenv("AWS_LAMBDA_FUNCTION_NAME"):
+        worker_task = asyncio.create_task(periodic_feed_worker())
     try:
         yield
     finally:
-        worker_task.cancel()
-        try:
-            await worker_task
-        except asyncio.CancelledError:
-            pass
+        if worker_task:
+            worker_task.cancel()
+            try:
+                await worker_task
+            except asyncio.CancelledError:
+                pass
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
